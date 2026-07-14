@@ -80,6 +80,8 @@ sudo systemctl restart nginx    # If using Nginx
 
 ## Production Deployment
 
+Before deploying to an existing database, run `database/production_fixes.sql` once. New installations only need `database/tenant_management.sql`.
+
 1. **Update .htaccess**: Change domain in hotlinking protection
 2. **Set strong passwords**: Change default admin credentials
 3. **Configure SSL**: Enable HTTPS for secure connections

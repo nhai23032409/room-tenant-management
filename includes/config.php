@@ -2,7 +2,7 @@
 // Database Configuration
 $host = "localhost";
 $dbname = "tenant_management";
-$user = "tenantuser";
+$user = "root";
 $pass = "";
 
 // Security Headers
@@ -42,5 +42,20 @@ function generate_receipt_number() {
 define('UPLOAD_DIR', 'uploads/');
 define('MAX_FILE_SIZE', 5 * 1024 * 1024); // 5MB
 define('ALLOWED_EXTENSIONS', ['jpg', 'jpeg', 'png', 'pdf']);
-?>
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+if (empty($_SESSION['csrf_token'])){
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+function csrf_token() { return $_SESSION['csrf_token']; }
+function verify_csrf($token) { return is_string($token) && hash_equals($_SESSION['csrf_token'], $token); }
+function require_csrf() {
+    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+        http_response_code(419);
+        echo json_encode(['success' => false, 'message' => 'Invalid or missing CSRF token.']);
+        exit;
+    }
+}
+?>

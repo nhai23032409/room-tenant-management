@@ -1,4 +1,6 @@
 <?php
+header('Location: ../workflow.php');
+exit;
 // checkout.php
 session_start();
 include_once '../db_connect.php'; // adjust path as needed

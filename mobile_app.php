@@ -1,10 +1,16 @@
 <?php
 session_start();
 include('includes/config.php');
+include('includes/permissions.php');
 
 // Handle AJAX requests
 if (isset($_POST['action'])) {
     $action = $_POST['action'];
+    if (!verify_csrf($_POST['csrf_token'] ?? '')) {
+        http_response_code(419);
+        echo json_encode(['success' => false, 'message' => 'Invalid or missing CSRF token.']);
+        exit;
+    }
     
     switch ($action) {
         case 'login':
@@ -28,34 +34,14 @@ if (isset($_POST['action'])) {
             break;
             
         case 'register':
-            $name = sanitize_input($_POST['name']);
-            $email = sanitize_input($_POST['email']);
-            $password = $_POST['password'];
-            $hostel_id = $_POST['hostel_id'];
-            
-            // Check if email already exists
-            $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
-            $stmt->execute([$email]);
-            if ($stmt->fetch()) {
-                echo json_encode(['success' => false, 'message' => 'Email already registered']);
-                break;
-            }
-            
-            $password_hash = password_hash($password, PASSWORD_DEFAULT);
-            
-            $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, hostel_id) VALUES (?, ?, ?, ?)");
-            if ($stmt->execute([$name, $email, $password_hash, $hostel_id])) {
-                echo json_encode(['success' => true, 'message' => 'Registration successful']);
-            } else {
-                echo json_encode(['success' => false, 'message' => 'Registration failed']);
-            }
+            // Accounts are provisioned by an administrator; public account creation
+            // would allow privilege and cross-branch abuse.
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'Self-registration is disabled. Contact an administrator.']);
             break;
             
         case 'add_hostel':
-            if (!isset($_SESSION['user_id'])) {
-                echo json_encode(['success' => false, 'message' => 'Please login']);
-                break;
-            }
+            require_api_permission('manage_hostels');
             
             $name = sanitize_input($_POST['name']);
             $address = sanitize_input($_POST['address']);
@@ -74,49 +60,13 @@ if (isset($_POST['action'])) {
             break;
             
         case 'add_tenant':
-            if (!isset($_SESSION['user_id'])) {
-                echo json_encode(['success' => false, 'message' => 'Please login']);
-                break;
-            }
-            
-            $name = sanitize_input($_POST['name']);
-            $email = sanitize_input($_POST['email']);
-            $phone = sanitize_input($_POST['phone']);
-            $address = sanitize_input($_POST['address']);
-            $bed_id = $_POST['bed_id'];
-            $checkin_date = $_POST['checkin_date'];
-            $monthly_rent = $_POST['monthly_rent'];
-            $security_deposit = $_POST['security_deposit'];
-            
-            $pdo->beginTransaction();
-            try {
-                // Insert tenant
-                $stmt = $pdo->prepare("INSERT INTO tenants (name, email, phone, address, bed_id, checkin_date, monthly_rent, security_deposit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$name, $email, $phone, $address, $bed_id, $checkin_date, $monthly_rent, $security_deposit]);
-                $tenant_id = $pdo->lastInsertId();
-                
-                // Update bed status
-                $stmt = $pdo->prepare("UPDATE beds SET status = 'occupied' WHERE id = ?");
-                $stmt->execute([$bed_id]);
-                
-                // Add to checkin history
-                $stmt = $pdo->prepare("INSERT INTO checkin_history (tenant_id, bed_id, checkin_date, rent_amount, security_deposit) VALUES (?, ?, ?, ?, ?)");
-                $stmt->execute([$tenant_id, $bed_id, $checkin_date, $monthly_rent, $security_deposit]);
-                
-                $pdo->commit();
-                log_activity($pdo, $_SESSION['user_id'], 'add_tenant', "Added tenant: $name");
-                echo json_encode(['success' => true, 'message' => 'Tenant registered successfully']);
-            } catch (Exception $e) {
-                $pdo->rollback();
-                echo json_encode(['success' => false, 'message' => 'Failed to register tenant']);
-            }
+            require_api_permission('manage_tenants');
+            http_response_code(409);
+            echo json_encode(['success' => false, 'message' => 'Use the registration, deposit, contract and handover workflow; direct check-in is disabled.']);
             break;
             
         case 'add_payment':
-            if (!isset($_SESSION['user_id'])) {
-                echo json_encode(['success' => false, 'message' => 'Please login']);
-                break;
-            }
+            require_api_permission('manage_payments');
             
             $tenant_id = $_POST['tenant_id'];
             $amount = $_POST['amount'];
@@ -125,6 +75,14 @@ if (isset($_POST['action'])) {
             $notes = sanitize_input($_POST['notes']);
             $payment_type = $_POST['payment_type'];
             $receipt_number = generate_receipt_number();
+
+            $tenantScope = $pdo->prepare("SELECT t.id FROM tenants t JOIN beds b ON b.id = t.bed_id JOIN rooms r ON r.id = b.room_id WHERE t.id = ? AND r.hostel_id = ?");
+            $tenantScope->execute([$tenant_id, (int)($_SESSION['hostel_id'] ?? 0)]);
+            if (!$tenantScope->fetch()) {
+                http_response_code(404);
+                echo json_encode(['success' => false, 'message' => 'Tenant not found in your branch']);
+                break;
+            }
             
             $stmt = $pdo->prepare("INSERT INTO payments (tenant_id, amount, date, method, notes, payment_type, receipt_number) VALUES (?, ?, ?, ?, ?, ?, ?)");
             if ($stmt->execute([$tenant_id, $amount, $date, $method, $notes, $payment_type, $receipt_number])) {
@@ -136,40 +94,9 @@ if (isset($_POST['action'])) {
             break;
             
         case 'checkout_tenant':
-            if (!isset($_SESSION['user_id'])) {
-                echo json_encode(['success' => false, 'message' => 'Please login']);
-                break;
-            }
-            
-            $tenant_id = $_POST['tenant_id'];
-            $checkout_date = $_POST['checkout_date'];
-            
-            $pdo->beginTransaction();
-            try {
-                // Get tenant's bed ID
-                $stmt = $pdo->prepare("SELECT bed_id, name FROM tenants WHERE id = ?");
-                $stmt->execute([$tenant_id]);
-                $tenant = $stmt->fetch();
-                
-                // Update tenant status and checkout date
-                $stmt = $pdo->prepare("UPDATE tenants SET status = 'checked_out', checkout_date = ? WHERE id = ?");
-                $stmt->execute([$checkout_date, $tenant_id]);
-                
-                // Update bed status to available
-                $stmt = $pdo->prepare("UPDATE beds SET status = 'available' WHERE id = ?");
-                $stmt->execute([$tenant['bed_id']]);
-                
-                // Update checkin history
-                $stmt = $pdo->prepare("UPDATE checkin_history SET checkout_date = ? WHERE tenant_id = ? AND checkout_date IS NULL");
-                $stmt->execute([$checkout_date, $tenant_id]);
-                
-                $pdo->commit();
-                log_activity($pdo, $_SESSION['user_id'], 'checkout_tenant', "Checked out tenant: " . $tenant['name']);
-                echo json_encode(['success' => true, 'message' => 'Tenant checked out successfully']);
-            } catch (Exception $e) {
-                $pdo->rollback();
-                echo json_encode(['success' => false, 'message' => 'Failed to checkout tenant']);
-            }
+            require_api_permission('checkout_tenant');
+            http_response_code(409);
+            echo json_encode(['success' => false, 'message' => 'Use api/checkout.php to calculate and confirm the financial settlement before checkout.']);
             break;
             
         case 'get_dashboard_data':
@@ -178,7 +105,7 @@ if (isset($_POST['action'])) {
                 break;
             }
             
-            $hostel_filter = $_SESSION['hostel_id'] ? "AND h.id = " . $_SESSION['hostel_id'] : "";
+            $hostel_filter = $_SESSION['hostel_id'] ? "AND h.id = " . (int)$_SESSION['hostel_id'] : "";
             
             // Get statistics
             $stats = [];
@@ -214,7 +141,8 @@ if (isset($_POST['action'])) {
             break;
             
         case 'get_available_beds':
-            $hostel_id = $_POST['hostel_id'];
+            require_api_permission('view_rooms');
+            $hostel_id = (int)($_SESSION['hostel_id'] ?? 0);
             $stmt = $pdo->prepare("
                 SELECT b.id, b.bed_number, r.room_number, r.monthly_rent 
                 FROM beds b 
@@ -228,6 +156,7 @@ if (isset($_POST['action'])) {
             break;
             
         case 'get_tenants':
+            require_api_permission('view_tenants');
             $hostel_filter = $_SESSION['hostel_id'] ? "AND h.id = " . $_SESSION['hostel_id'] : "";
             $stmt = $pdo->prepare("
                 SELECT t.*, b.bed_number, r.room_number, h.name as hostel_name 
@@ -244,6 +173,7 @@ if (isset($_POST['action'])) {
             break;
             
         case 'get_payments':
+            require_api_permission('manage_payments');
             $start_date = $_POST['start_date'];
             $end_date = $_POST['end_date'];
             $hostel_filter = $_SESSION['hostel_id'] ? "AND h.id = " . $_SESSION['hostel_id'] : "";
@@ -841,6 +771,18 @@ if (isset($_POST['action'])) {
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        const csrfToken = <?php echo json_encode(csrf_token()); ?>;
+        const nativeFetch = window.fetch.bind(window);
+        window.fetch = (input, init = {}) => {
+            if ((init.method || 'GET').toUpperCase() === 'POST') {
+                if (init.body instanceof FormData) {
+                    init.body.set('csrf_token', csrfToken);
+                } else if (typeof init.body === 'string') {
+                    init.body += (init.body ? '&' : '') + 'csrf_token=' + encodeURIComponent(csrfToken);
+                }
+            }
+            return nativeFetch(input, init);
+        };
         // Global variables
         let currentSection = 'dashboard';
         

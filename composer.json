@@ -1,0 +1,14 @@
+{
+    "name": "hostel/tenant-wifi-management",
+    "description": "HomeStay Dorm Management System",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "tecnickcom/tcpdf": "^6.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "includes/"
+        }
+    }
+}

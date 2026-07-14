@@ -16,7 +16,7 @@ $stmt = $pdo->query("SELECT IFNULL(SUM(amount), 0) FROM payments");
 $totalPayments = $stmt->fetchColumn();
 
 // Fetch current checked-in tenants count
-$stmt = $pdo->query("SELECT COUNT(*) FROM checkin_checkout WHERE checkout_date IS NULL");
+$stmt = $pdo->query("SELECT COUNT(*) FROM checkin_history WHERE checkout_date IS NULL");
 $currentCheckins = $stmt->fetchColumn();
 ?>
 

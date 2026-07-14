@@ -21,6 +21,18 @@ $currentPage = basename($_SERVER['PHP_SELF']);
     <li class="nav-item">
       <a class="nav-link <?php if ($currentPage == 'manage-rooms.php') echo 'active'; ?>" href="manage-rooms.php">Manage Rooms</a>
     </li>
+
+    <li class="nav-item mt-3">
+        <h6 class="text-muted px-3">Admin Settings</h6>
+    </li>
+
+    <li class="nav-item">
+      <a class="nav-link <?php if ($currentPage == 'manage-hostels.php') echo 'active'; ?>" href="admin/manage-hostels.php">Manage Hostels</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link <?php if ($currentPage == 'manage-room-types.php') echo 'active'; ?>" href="admin/manage-room-types.php">Manage Room Types</a>
+    </li>
+
     <li class="nav-item">
       <a class="nav-link <?php if ($currentPage == 'admin/add-payment.php') echo 'active'; ?>" href="admin/add-payment.php">Add Payment</a>
     </li>
